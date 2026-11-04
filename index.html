@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice AI</title>
+<style>
+body{font-family:sans-serif;background:#111;color:#eee;margin:0;padding:16px}
+input{width:100%;padding:10px;margin:4px 0 12px;box-sizing:border-box;font-size:16px}
+button{width:100%;padding:18px;font-size:20px;border:0;border-radius:12px;background:#2d7ff9;color:#fff}
+#log{margin-top:16px;line-height:1.5}
+.me{color:#8fc}.ai{color:#fc8}
+</style>
+</head>
+<body>
+<label>API key</label>
+<input id="key" type="password" placeholder="Paste Gemini API key">
+<label>Model name</label>
+<input id="model" placeholder="e.g. gemini-2.5-flash">
+<button id="btn">Start talking</button>
+<div id="status" style="margin:10px 0">Idle</div>
+<div id="log"></div>
+<script>
+const $ = id => document.getElementById(id);
+$("key").value = localStorage.getItem("k") || "";
+$("model").value = localStorage.getItem("m") || "gemini-2.5-flash";
+let on = false, busy = false, hist = [];
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function status(t){ $("status").textContent = t; }
+function log(who, t){
+  const d = document.createElement("div");
+  d.className = who; d.textContent = (who=="me"?"You: ":"AI: ") + t;
+  $("log").prepend(d);
+}
+
+function listen(){
+  if(!on || busy) return;
+  const rec = new SR();
+  rec.lang = "en-US";
+  rec.onstart = () => status("Listening...");
+  rec.onresult = e => { busy = true; ask(e.results[0][0].transcript); };
+  rec.onerror = () => {};
+  rec.onend = () => { if(on && !busy) setTimeout(listen, 300); };
+  rec.start();
+}
+
+async function ask(text){
+  log("me", text);
+  status("Thinking...");
+  hist.push({role:"user", parts:[{text}]});
+  try{
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/"
+      + $("model").value + ":generateContent?key=" + $("key").value;
+    const r = await fetch(url, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        systemInstruction:{parts:[{text:"You are a voice assistant. Reply in short, natural spoken sentences. No markdown, no lists, no emojis."}]},
+        contents: hist
+      })
+    });
+    const j = await r.json();
+    if(j.error) throw new Error(j.error.message);
+    const reply = j.candidates[0].content.parts.map(p=>p.text||"").join("");
+    hist.push({role:"model", parts:[{text:reply}]});
+    log("ai", reply);
+    speak(reply);
+  }catch(err){
+    log("ai", "Error: " + err.message);
+    busy = false; on = false; $("btn").textContent = "Start talking"; status("Stopped");
+  }
+}
+
+function speak(t){
+  status("Speaking...");
+  const u = new SpeechSynthesisUtterance(t);
+  u.onend = () => { busy = false; listen(); };
+  speechSynthesis.speak(u);
+}
+
+$("btn").onclick = () => {
+  if(!SR){ alert("Use Chrome on Android."); return; }
+  if(on){ on = false; busy = false; speechSynthesis.cancel(); $("btn").textContent = "Start talking"; status("Stopped"); return; }
+  localStorage.setItem("k", $("key").value);
+  localStorage.setItem("m", $("model").value);
+  on = true; busy = false; $("btn").textContent = "Stop";
+  listen();
+};
+</script>
+</body>
+</html>
